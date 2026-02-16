@@ -1,0 +1,60 @@
+# OS / Editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+.python-version
+
+# Python virtual environments
+venv/
+.venv/
+env/
+ENV/
+backend/venv/
+
+# Node / frontend build
+node_modules/
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+
+# Backend runtime/generated artifacts
+backend/audio_temp/
+backend/uploads/
+uploads/
+data/chroma_db/
+
+# Binary/model artifacts (keep required avatar model)
+*.glb
+!frontend/public/models/avatar.glb
+
+# Misc build/temp
+tmp/
+temp/
+*.tmp

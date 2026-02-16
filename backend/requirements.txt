@@ -1,0 +1,48 @@
+# FastAPI & Server
+fastapi
+uvicorn
+python-multipart
+python-jose
+passlib
+
+# Database
+sqlalchemy
+aiosqlite
+
+# Document Processing
+PyPDF2
+pdfplumber
+python-docx
+pytesseract
+Pillow
+
+# NLP & ML
+torch
+transformers
+sentence-transformers
+accelerate
+
+# Speech Processing (Wav2Vec2)
+librosa
+soundfile
+scipy
+
+# RAG & Vector Store
+chromadb
+langchain
+langchain-community
+
+# Groq LLM
+groq
+
+# Utilities
+python-dotenv
+numpy
+pandas
+pydantic
+httpx
+
+transformers
+sentencepiece
+protobuf
+sacremoses
