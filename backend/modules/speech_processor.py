@@ -5,6 +5,7 @@ Actually uses Wav2Vec2 properly with fallbacks
 """
 
 import os
+import warnings
 import torch
 import librosa
 import numpy as np
@@ -13,7 +14,8 @@ from transformers import (
     Wav2Vec2ForCTC,
     Wav2Vec2Processor,
     AutoProcessor,
-    AutoModelForCTC
+    AutoModelForCTC,
+    pipeline
 )
 import soundfile as sf
 
@@ -37,6 +39,8 @@ class SpeechProcessor:
         self._hindi_model = None
         self._multilingual_processor = None
         self._multilingual_model = None
+        self._whisper_en_pipeline = None
+        self._whisper_multi_pipeline = None
 
         self.sample_rate = 16000
 
@@ -119,15 +123,74 @@ class SpeechProcessor:
             print("✅ Multilingual model loaded!")
         return self._multilingual_model
 
+    @property
+    def whisper_en_pipeline(self):
+        """Whisper English fallback pipeline"""
+        if self._whisper_en_pipeline is None:
+            print("📥 Loading Whisper English fallback...")
+            self._whisper_en_pipeline = pipeline(
+                "automatic-speech-recognition",
+                model="openai/whisper-tiny.en",
+                device=0 if self.device == "cuda" else -1,
+            )
+            print("✅ Whisper English fallback loaded!")
+        return self._whisper_en_pipeline
+
+    @property
+    def whisper_multi_pipeline(self):
+        """Whisper multilingual fallback pipeline"""
+        if self._whisper_multi_pipeline is None:
+            print("📥 Loading Whisper multilingual fallback...")
+            self._whisper_multi_pipeline = pipeline(
+                "automatic-speech-recognition",
+                model="openai/whisper-tiny",
+                device=0 if self.device == "cuda" else -1,
+            )
+            print("✅ Whisper multilingual fallback loaded!")
+        return self._whisper_multi_pipeline
+
+    @staticmethod
+    def _is_meaningful_text(text: str) -> bool:
+        cleaned = (text or "").strip()
+        if not cleaned:
+            return False
+        # Reject punctuation-only outputs like "..."
+        return any(ch.isalnum() for ch in cleaned)
+
     def load_audio(self, file_path: str) -> tuple:
         """Load and preprocess audio"""
         try:
-            # Load with librosa (handles many formats)
-            audio, sr = librosa.load(file_path, sr=self.sample_rate)
+            # Prefer soundfile first (quiet and fast for common formats).
+            try:
+                audio, sr = sf.read(file_path, dtype="float32")
+            except Exception:
+                # Fallback for formats not handled by soundfile (e.g., some webm/opus).
+                # Suppress known noisy warnings from librosa's deprecated audioread path.
+                with warnings.catch_warnings():
+                    warnings.filterwarnings(
+                        "ignore",
+                        message="PySoundFile failed. Trying audioread instead.*",
+                        category=UserWarning,
+                    )
+                    warnings.filterwarnings(
+                        "ignore",
+                        message="librosa.core.audio.__audioread_load.*",
+                        category=FutureWarning,
+                    )
+                    audio, sr = librosa.load(file_path, sr=None)
 
             # Ensure mono
             if len(audio.shape) > 1:
-                audio = librosa.to_mono(audio)
+                audio = np.mean(audio, axis=1)
+
+            # Resample if needed
+            if sr != self.sample_rate:
+                audio = librosa.resample(
+                    audio,
+                    orig_sr=sr,
+                    target_sr=self.sample_rate
+                )
+                sr = self.sample_rate
 
             # Normalize
             audio = audio / (np.max(np.abs(audio)) + 1e-8)
@@ -182,6 +245,22 @@ class SpeechProcessor:
             # Fallback to English model
             return self.transcribe_english(audio_array)
 
+    def transcribe_with_whisper(self, audio_array: np.ndarray, language: str = "en") -> str:
+        """Fallback transcription using Whisper models."""
+        if language == "hi":
+            out = self.whisper_multi_pipeline(
+                {"array": audio_array, "sampling_rate": self.sample_rate},
+                generate_kwargs={"language": "hi"}
+            )
+        else:
+            out = self.whisper_en_pipeline(
+                {"array": audio_array, "sampling_rate": self.sample_rate}
+            )
+
+        if isinstance(out, dict):
+            return (out.get("text") or "").strip()
+        return str(out or "").strip()
+
     def transcribe(
         self,
         file_path: str,
@@ -201,21 +280,44 @@ class SpeechProcessor:
 
             print(f"🎤 Transcribing {duration:.1f}s of audio in {language}...")
 
-            # Transcribe based on language
-            if language == "hi":
-                text = self.transcribe_hindi(audio)
-            else:
-                text = self.transcribe_english(audio)
+            # Transcribe with primary model first.
+            primary_error = None
+            try:
+                if language == "hi":
+                    text = self.transcribe_hindi(audio)
+                else:
+                    text = self.transcribe_english(audio)
+                text = (text or "").strip()
+                if not self._is_meaningful_text(text):
+                    raise Exception("Wav2Vec2 produced empty/low-confidence text")
 
-            print(f"✅ Transcription: {text[:100]}...")
+                print(f"✅ Transcription: {text[:100]}...")
+                return {
+                    "success": True,
+                    "text": text,
+                    "language": language,
+                    "duration_seconds": round(duration, 2),
+                    "model_used": f"wav2vec2-{language}"
+                }
+            except Exception as e:
+                primary_error = str(e)
+                print(f"⚠️ Primary STT failed, trying Whisper fallback: {primary_error}")
 
-            return {
-                "success": True,
-                "text": text,
-                "language": language,
-                "duration_seconds": round(duration, 2),
-                "model_used": f"wav2vec2-{language}"
-            }
+            # Whisper fallback
+            fallback_text = self.transcribe_with_whisper(audio, language).strip()
+            if self._is_meaningful_text(fallback_text):
+                print(f"✅ Transcription (Whisper): {fallback_text[:100]}...")
+                return {
+                    "success": True,
+                    "text": fallback_text,
+                    "language": language,
+                    "duration_seconds": round(duration, 2),
+                    "model_used": f"whisper-{language}"
+                }
+
+            raise Exception(
+                f"Could not detect clear speech from the audio (primary: {primary_error})"
+            )
 
         except Exception as e:
             print(f"❌ Transcription error: {e}")

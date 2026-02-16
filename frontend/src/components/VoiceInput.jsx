@@ -55,9 +55,20 @@ export default function VoiceInput({
   };
 
   const transcribeWithBackend = async () => {
-    const blob = new Blob(chunksRef.current, { type: "audio/webm" });
-    const response = await api.transcribeAudio(blob);
-    return (
+    if (!Array.isArray(chunksRef.current) || chunksRef.current.length === 0) {
+      throw new Error("No audio captured");
+    }
+
+    const blob = new Blob(chunksRef.current, {
+      type: chunksRef.current[0]?.type || "audio/webm",
+    });
+
+    const formData = new FormData();
+    formData.append("audio", blob, "voice.webm");
+    formData.append("language", language || "en");
+
+    const response = await api.transcribeAudio(formData);
+    const transcript = (
       response?.transcript ||
       response?.text ||
       response?.result ||
@@ -66,6 +77,12 @@ export default function VoiceInput({
     )
       .toString()
       .trim();
+
+    if (!transcript) {
+      throw new Error("Empty transcription from backend");
+    }
+
+    return transcript;
   };
 
   const stopRecording = () => {
